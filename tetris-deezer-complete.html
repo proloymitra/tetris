@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tetris with Music</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+            transition: background-color 0.3s;
+        }
+        #game-container {
+            text-align: center;
+        }
+        #tetris-board {
+            border: 2px solid #000;
+            display: inline-block;
+        }
+        #next-piece {
+            border: 2px solid #000;
+            display: inline-block;
+            margin-left: 20px;
+        }
+        #controls {
+            margin-top: 20px;
+        }
+        button {
+            font-size: 16px;
+            margin: 5px;
+            padding: 10px;
+            cursor: pointer;
+        }
+        #score, #level {
+            font-size: 18px;
+            margin: 10px 0;
+        }
+        .dark-mode {
+            background-color: #333;
+            color: #fff;
+        }
+        .dark-mode #tetris-board,
+        .dark-mode #next-piece {
+            border-color: #fff;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div>
+            <canvas id="tetris-board" width="240" height="400"></canvas>
+            <canvas id="next-piece" width="80" height="80"></canvas>
+        </div>
+        <div id="score">Score: 0</div>
+        <div id="level">Level: 1</div>
+        <div id="controls">
+            <button id="start-button">Start Game</button>
+            <button id="toggle-dark-mode">Toggle Dark Mode</button>
+            <button id="toggle-music">Toggle Music</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('tetris-board');
+        const ctx = canvas.getContext('2d');
+        const nextPieceCanvas = document.getElementById('next-piece');
+        const nextPieceCtx = nextPieceCanvas.getContext('2d');
+        const startButton = document.getElementById('start-button');
+        const toggleDarkModeButton = document.getElementById('toggle-dark-mode');
+        const toggleMusicButton = document.getElementById('toggle-music');
+        const scoreElement = document.getElementById('score');
+        const levelElement = document.getElementById('level');
+
+        const ROWS = 20;
+        const COLS = 12;
+        const BLOCK_SIZE = 20;
+        let board = Array(ROWS).fill().map(() => Array(COLS).fill(0));
+        let score = 0;
+        let level = 1;
+        let gameLoop;
+        let currentPiece;
+        let nextPiece;
+
+        const SHAPES = [
+            [[1, 1, 1, 1]],
+            [[1, 1], [1, 1]],
+            [[1, 1, 1], [0, 1, 0]],
+            [[1, 1, 1], [1, 0, 0]],
+            [[1, 1, 1], [0, 0, 1]],
+            [[1, 1, 0], [0, 1, 1]],
+            [[0, 1, 1], [1, 1, 0]]
+        ];
+
+        const COLORS = [
+            '#00FFFF', '#FFFF00', '#800080', '#FF0000', '#0000FF', '#00FF00', '#FFA500'
+        ];
+
+        // Deezer API integration
+        let audioElement;
+        let isMusicPlaying = false;
+
+        function fetchAndPlayMusic() {
+            const options = {
+                method: 'GET',
+                headers: {
+                    'X-RapidAPI-Key': '929c1212eemshfc8edd0180268e5p1e30cbjsnb13437dab1df', // Replace with your actual RapidAPI key
+                    'X-RapidAPI-Host': 'deezer-1.p.rapidapi.com'
+                }
+            };
+
+            fetch('https://deezer-1.p.rapidapi.com/track/3135556', options)
+                .then(response => response.json())
+                .then(response => {
+                    if (response.preview) {
+                        if (audioElement) {
+                            audioElement.pause();
+                        }
+                        audioElement = new Audio(response.preview);
+                        audioElement.loop = true;
+                        audioElement.play();
+                        isMusicPlaying = true;
+                        toggleMusicButton.textContent = 'Turn Music Off';
+                    }
+                })
+                .catch(err => console.error(err));
+        }
+
+        toggleMusicButton.addEventListener('click', () => {
+            if (isMusicPlaying) {
+                audioElement.pause();
+                isMusicPlaying = false;
+                toggleMusicButton.textContent = 'Turn Music On';
+            } else {
+                fetchAndPlayMusic();
+            }
+        });
+
+        function drawBoard() {
+            ctx.fillStyle = document.body.classList.contains('dark-mode') ? '#333' : '#FFF';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    if (board[r][c]) {
+                        ctx.fillStyle = COLORS[board[r][c] - 1];
+                        ctx.fillRect(c * BLOCK_SIZE, r * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+                        ctx.strokeStyle = document.body.classList.contains('dark-mode') ? '#FFF' : '#000';
+                        ctx.strokeRect(c * BLOCK_SIZE, r * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+                    }
+                }
+            }
+        }
+
+        function drawPiece(piece, offsetX = 0, offsetY = 0, targetCtx = ctx) {
+            piece.shape.forEach((row, r) => {
+                row.forEach((value, c) => {
+                    if (value) {
+                        targetCtx.fillStyle = COLORS[piece.color];
+                        targetCtx.fillRect((piece.x + c + offsetX) * BLOCK_SIZE, (piece.y + r + offsetY) * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+                        targetCtx.strokeStyle = document.body.classList.contains('dark-mode') ? '#FFF' : '#000';
+                        targetCtx.strokeRect((piece.x + c + offsetX) * BLOCK_SIZE, (piece.y + r + offsetY) * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+                    }
+                });
+            });
+        }
+
+        function drawNextPiece() {
+            nextPieceCtx.fillStyle = document.body.classList.contains('dark-mode') ? '#333' : '#FFF';
+            nextPieceCtx.fillRect(0, 0, nextPieceCanvas.width, nextPieceCanvas.height);
+            drawPiece(nextPiece, 1, 1, nextPieceCtx);
+        }
+
+        function createPiece() {
+            const shapeIndex = Math.floor(Math.random() * SHAPES.length);
+            return {
+                shape: SHAPES[shapeIndex],
+                color: shapeIndex,
+                x: Math.floor(COLS / 2) - Math.ceil(SHAPES[shapeIndex][0].length / 2),
+                y: 0
+            };
+        }
+
+        function collides(piece, offsetX = 0, offsetY = 0) {
+            return piece.shape.some((row, r) => {
+                return row.some((value, c) => {
+                    const newX = piece.x + c + offsetX;
+                    const newY = piece.y + r + offsetY;
+                    return (
+                        value &&
+                        (newX < 0 || newX >= COLS || newY >= ROWS ||
+                        (newY >= 0 && board[newY][newX]))
+                    );
+                });
+            });
+        }
+
+        function merge(piece) {
+            piece.shape.forEach((row, r) => {
+                row.forEach((value, c) => {
+                    if (value) {
+                        board[piece.y + r][piece.x + c] = piece.color + 1;
+                    }
+                });
+            });
+        }
+
+        function rotatePiece(piece) {
+            const rotated = piece.shape[0].map((_, i) =>
+                piece.shape.map(row => row[i]).reverse()
+            );
+            if (!collides({ ...piece, shape: rotated })) {
+                piece.shape = rotated;
+            }
+        }
+
+        function clearLines() {
+            let linesCleared = 0;
+            for (let r = ROWS - 1; r >= 0; r--) {
+                if (board[r].every(cell => cell !== 0)) {
+                    board.splice(r, 1);
+                    board.unshift(Array(COLS).fill(0));
+                    linesCleared++;
+                }
+            }
+            if (linesCleared > 0) {
+                score += linesCleared * 100 * level;
+                level = Math.floor(score / 1000) + 1;
+                scoreElement.textContent = `Score: ${score}`;
+                levelElement.textContent = `Level: ${level}`;
+            }
+        }
+
+        function gameOver() {
+            clearInterval(gameLoop);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#FFF';
+            ctx.font = '30px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 30);
+            ctx.fillText(`Score: ${score}`, canvas.width / 2, canvas.height / 2 + 10);
+            ctx.fillText(`Level: ${level}`, canvas.width / 2, canvas.height / 2 + 50);
+            startButton.textContent = 'Restart Game';
+        }
+
+        function update() {
+            if (collides(currentPiece, 0, 1)) {
+                merge(currentPiece);
+                clearLines();
+                if (currentPiece.y === 0) {
+                    gameOver();
+                    return;
+                }
+                currentPiece = nextPiece;
+                nextPiece = createPiece();
+                drawNextPiece();
+            } else {
+                currentPiece.y++;
+            }
+            drawBoard();
+            drawPiece(currentPiece);
+        }
+
+        function startGame() {
+            board = Array(ROWS).fill().map(() => Array(COLS).fill(0));
+            score = 0;
+            level = 1;
+            scoreElement.textContent = 'Score: 0';
+            levelElement.textContent = 'Level: 1';
+            currentPiece = createPiece();
+            nextPiece = createPiece();
+            drawNextPiece();
+            if (gameLoop) clearInterval(gameLoop);
+            gameLoop = setInterval(update, 1000 / level);
+            startButton.textContent = 'Restart Game';
+        }
+
+        function moveLeft() {
+            if (!collides(currentPiece, -1)) {
+                currentPiece.x--;
+            }
+        }
+
+        function moveRight() {
+            if (!collides(currentPiece, 1)) {
+                currentPiece.x++;
+            }
+        }
+
+        function moveDown() {
+            if (!collides(currentPiece, 0, 1)) {
+                currentPiece.y++;
+            }
+        }
+
+        document.addEventListener('keydown', event => {
+            switch (event.keyCode) {
+                case 37: moveLeft(); break;
+                case 39: moveRight(); break;
+                case 40: moveDown(); break;
+                case 38: rotatePiece(currentPiece); break;
+            }
+            drawBoard();
+            drawPiece(currentPiece);
+        });
+
+        canvas.addEventListener('click', event => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+            if (clickX < canvas.width / 2) {
+                moveLeft();
+            } else {
+                moveRight();
+            }
+            drawBoard();
+            drawPiece(currentPiece);
+        });
+
+        let touchStartX, touchStartY;
+
+        canvas.addEventListener('touchstart', event => {
+            touchStartX = event.touches[0].clientX;
+            touchStartY = event.touches[0].clientY;
+        });
+
+        canvas.addEventListener('touchmove', event => {
+            event.preventDefault();
+            const touchEndX = event.touches[0].clientX;
+            const touchEndY = event.touches[0].clientY;
+            const diffX = touchEndX - touchStartX;
+            const diffY = touchEndY - touchStartY;
+
+            if (Math.abs(diffX) > Math.abs(diffY)) {
+                if (diffX > 0) {
+                    moveRight();
+                } else {
+                    moveLeft();
+                }
+            } else {
+                if (diffY > 0) {
+                    moveDown();
+                } else {
+                    rotatePiece(currentPiece);
+                }
+            }
+
+            touchStartX = touchEndX;
+            touchStartY = touchEndY;
+
+            drawBoard();
+            drawPiece(currentPiece);
+        });
+
+        startButton.addEventListener('click', startGame);
+
+        toggleDarkModeButton.addEventListener('click', () => {
+            document.body.classList.toggle('dark-mode');
+            drawBoard();
+            drawPiece(currentPiece);
+            drawNextPiece();
+        });
+
+        drawBoard();
+    </script>
+</body>
+</html>
